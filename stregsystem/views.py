@@ -4,10 +4,9 @@ from functools import reduce
 from django.db.models import Q
 from django.http import HttpResponsePermanentRedirect
 from django.shortcuts import get_object_or_404, render
-from stregsystem.utils import (
-    make_active_productlist_query,
-    make_room_specific_query
-)
+from django.utils import timezone
+
+import stregsystem.parser as parser
 from stregsystem.models import (
     Member,
     News,
@@ -15,9 +14,13 @@ from stregsystem.models import (
     Room,
     StregForbudError,
     NoMoreInventoryError,
-    Order
+    Order,
+    Sale,
 )
-import stregsystem.parser as parser
+from stregsystem.utils import (
+    make_active_productlist_query,
+    make_room_specific_query
+)
 from .booze import ballmer_peak
 
 
@@ -83,12 +86,13 @@ def sale(request, room_id):
 def quicksale(request, room, member, bought_ids):
     news = __get_news()
     product_list = __get_productlist(room.id)
+    now = timezone.now()
 
     # Retrieve products and construct transaction
     products = []
     try:
         for i in bought_ids:
-            product = Product.objects.get(Q(pk=i), Q(active=True), Q(deactivate_date__gte=datetime.datetime.now()) | Q(
+            product = Product.objects.get(Q(pk=i), Q(active=True), Q(deactivate_date__gte=now) | Q(
                 deactivate_date__isnull=True), Q(rooms__id=room.id) | Q(rooms=None))
             products.append(product)
     except Product.DoesNotExist:
@@ -112,6 +116,13 @@ def quicksale(request, room, member, bought_ids):
     is_ballmer_peaking, bp_minutes, bp_seconds = ballmer_peak(promille)
 
     cost = order.total
+
+    # Get a timestamp to fetch sales for the member since.
+    earliest_recent_purchase = now - datetime.timedelta(seconds=60)
+    # Count the sales since
+    number_of_recent_purchases = Sale.objects.filter(member=member, timestamp__gt=earliest_recent_purchase).count() - 1
+    # Only give hint if the user did not just do a multibuy
+    give_multibuy_hint = number_of_recent_purchases > 0 and len(bought_ids) == 1
 
     return render(request, 'stregsystem/index_sale.html', locals())
 
